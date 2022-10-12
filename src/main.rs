@@ -74,21 +74,22 @@ struct ReadingsQueryParam{
     until: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone)]
 struct DBReading{
     reading_at: bson::DateTime, 
     data: Vec<ContinuousData>,
     created_at: bson::DateTime,
+    patient: Patient,
 }
 
 
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone)]
 struct NewReading{
-
     #[serde(with = "bson_datetime_as_rfc3339_string")]
     reading_at: bson::DateTime,
     data: Vec<ContinuousData>,
+    patient: Patient,
 }
 #[derive(Serialize, Deserialize)]
 struct GetReadingsResponse {
@@ -98,15 +99,15 @@ struct GetReadingsResponse {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct ContinuousData {
     service_id: String,
-    alias: String,
+    alias: Option<String>,
     value: f32,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 struct Patient {
-    bid : String,
-    alias: String,
-    data: Vec<Value>,
+    bluetooth_id : String,
+    alias: Option<String>,
+    data: Option<Value>,
 }
 
 
@@ -155,6 +156,7 @@ fn convert_to_db_reading(reading: web::Json<NewReading>) -> DBReading {
     DBReading {
         reading_at: cloned.reading_at, 
         data: cloned.data,
+        patient: cloned.patient,
         created_at: bson::DateTime::now(),
     }
 }
