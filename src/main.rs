@@ -38,8 +38,6 @@ async fn main() -> std::io::Result<()> {
                 move || {App::new()
                     .app_data(web::Data::new(c.clone()))
                     .service(get_status)
-                    .service(get_patient)
-                    .service(post_patient)
                     .service(get_readings)
                     .service(post_readings)
                 })
@@ -51,28 +49,6 @@ async fn main() -> std::io::Result<()> {
 }
 
 
-#[get("/status")]
-async fn get_status(client: web::Data<Client>) -> HttpResponse {
-    HttpResponse::Ok().body("Hi")
-
-}
-
-#[get("/patient/{bid}")]
-async fn get_patient(client: web::Data<Client>) -> HttpResponse {
-    HttpResponse::Ok().body("Hi")
-
-}
-
-#[post("/patient")]
-async fn post_patient(client: web::Data<Client>, patient: web::Json<Patient>) -> HttpResponse {
-    HttpResponse::Ok().body("Hi")
-
-}
-#[derive(Serialize, Deserialize)]
-struct ReadingsQueryParam{
-    from: Option<String>,
-    until: Option<String>,
-}
 
 #[derive(Serialize, Deserialize, Clone)]
 struct DBReading{
@@ -83,7 +59,6 @@ struct DBReading{
 }
 
 
-
 #[derive(Serialize, Deserialize, Clone)]
 struct NewReading{
     #[serde(with = "bson_datetime_as_rfc3339_string")]
@@ -91,10 +66,7 @@ struct NewReading{
     data: Vec<ContinuousData>,
     patient: Patient,
 }
-#[derive(Serialize, Deserialize)]
-struct GetReadingsResponse {
-    readings: Vec<DBReading>,
-}
+
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct ContinuousData {
@@ -110,26 +82,48 @@ struct Patient {
     data: Option<Value>,
 }
 
+#[get("/status")]
+async fn get_status(client: web::Data<Client>) -> HttpResponse {
+    HttpResponse::Ok().body("Hi")
+
+}
+#[derive(Serialize, Deserialize)]
+struct ReadingsQueryParam{
+    patient: Option<String>,
+    from: Option<String>,
+    until: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct GetReadingsResponse {
+    readings: Vec<DBReading>,
+}
 
 #[get("/readings")]
 async fn get_readings(client: web::Data<Client>, query: web::Query<ReadingsQueryParam>) -> HttpResponse {
     let readings_collection =  client.database("cfa-hud").collection("readings");
+    
+    let mut filter_options = bson::Document::new();
 
-    let cursor = readings_collection.find(None, None).await;
+    if let Some(bid) = &query.patient {
+        filter_options.insert("patient.bluetooth_id",  bid);
+    }
+
+    let cursor = readings_collection.find(filter_options, None).await;
 
     match cursor {
-        Err(e) => HttpResponse::InternalServerError().body("Couldn't get readings"),
         Ok(mut c) => {
             let mut readings = Vec::<DBReading>::new();
             while let Some(result) = c.next().await {
                     match result {
                         Ok(doc) => readings.push(doc),
-                        _ => return HttpResponse::InternalServerError().body("Couldn't get readings"),
+                        Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
                     }
             }
 
             HttpResponse::Ok().json(web::Json( GetReadingsResponse {readings: readings}) )
-        }
+        },
+        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
     }
 }
 
