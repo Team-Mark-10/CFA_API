@@ -3,16 +3,6 @@
 version = 3
 
 [[package]]
-name = "CFA_API"
-version = "0.1.0"
-dependencies = [
- "actix-web",
- "dotenv",
- "mongodb",
- "tokio",
-]
-
-[[package]]
 name = "actix-codec"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -308,6 +298,7 @@ checksum = "99d76085681585d39016f4d3841eb019201fc54d2dd0d92ad1e4fab3bfb32754"
 dependencies = [
  "ahash",
  "base64",
+ "chrono",
  "hex",
  "indexmap",
  "lazy_static",
@@ -347,6 +338,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2fff2a6927b3bb87f9595d67196a70493f627687a71d87a0d692242c33f58c11"
 dependencies = [
  "jobserver",
+]
+
+[[package]]
+name = "cfa_hud"
+version = "0.1.0"
+dependencies = [
+ "actix-web",
+ "bson",
+ "chrono",
+ "dotenv",
+ "futures",
+ "mongodb",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -604,12 +610,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "futures"
+version = "0.3.24"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f21eda599937fba36daeb58a22e8f5cee2d14c4a17b5b7739c7c8e5e3b8230c"
+dependencies = [
+ "futures-channel",
+ "futures-core",
+ "futures-executor",
+ "futures-io",
+ "futures-sink",
+ "futures-task",
+ "futures-util",
+]
+
+[[package]]
 name = "futures-channel"
 version = "0.3.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "30bdd20c28fadd505d0fd6712cdfcb0d4b5648baf45faef7f852afb2399bb050"
 dependencies = [
  "futures-core",
+ "futures-sink",
 ]
 
 [[package]]
@@ -664,9 +686,11 @@ version = "0.3.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "44fb6cb1be61cc1d2e43b262516aafcf63b241cffdb1d3fa115f91d9c7b09c90"
 dependencies = [
+ "futures-channel",
  "futures-core",
  "futures-io",
  "futures-macro",
+ "futures-sink",
  "futures-task",
  "memchr",
  "pin-project-lite",
