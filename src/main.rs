@@ -73,6 +73,7 @@ struct ContinuousData {
     service_id: String,
     alias: Option<String>,
     value: f32,
+    confidence: i32,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -131,15 +132,12 @@ async fn get_readings(client: web::Data<Client>, query: web::Query<ReadingsQuery
 async fn post_readings(client: web::Data<Client>, reading: web::Json<NewReading>) -> HttpResponse {
     let readings_collection =  client.database("cfa-hud").collection::<DBReading>("readings");
 
-    println!("{}", reading.reading_at);
-   
     let new_reading = convert_to_db_reading(reading);
 
-    println!("{} {}", new_reading.reading_at, new_reading.created_at);
     let result = readings_collection.insert_one(new_reading, None).await;
 
     match result {
-        Ok(r) => HttpResponse::Ok().body("Hi"),
+        Ok(r) => HttpResponse::Ok().body("200 OK"),
         Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
     }
 }
@@ -168,16 +166,6 @@ async fn connect_mongodb(connection_string: String) -> mongodb::error::Result<Cl
         .await?;
 
     println!("Connected successfully.");
-
-    for db_name in client.list_database_names(None, None).await? {
-        println!("{}", db_name);
-    }
-
-    let db = client.database("cfa-hud");
-
-    for collection_name in db.list_collection_names(None).await? {
-        println!("{}", collection_name)
-    }
 
     Ok(client)
 }
