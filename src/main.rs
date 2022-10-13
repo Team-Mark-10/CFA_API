@@ -57,10 +57,10 @@ struct ReadingsQueryParam{
     // If key exists, API will only return readings from this bluetooth id.
     patient: Option<String>,
 
-    // Specifies a earliest datetime (RFC3339) for the reading data
+    // Specifies a earliest datetime (URL Encoded RFC3339) for the reading data
     from: Option<String>,
 
-    // Specifies a latest datetime (RFC3339) for the reading data
+    // Specifies a latest datetime (URL Encoded RFC3339) for the reading data
     until: Option<String>,
 
     // Specifies which page number to return. Readings are returned in blocks of PAGE_SIZE. 
@@ -84,7 +84,29 @@ async fn get_readings(client: web::Data<Client>, query: web::Query<ReadingsQuery
     if let Some(bid) = &query.patient {
         filter_options.insert("patient.bluetooth_id",  bid);
     };
-    
+  
+    // Adds filter for readings after the from date. from string must be in URL Encoded RFC3339
+    // format.
+    if let Some(from) = &query.from {
+        println!("{}", from);
+        if let Ok(date) = bson::DateTime::parse_rfc3339_str(from) {
+            filter_options.insert("reading_at", doc!("$gte": date));
+        } else {
+            return HttpResponse::BadRequest().body("from date is invalid");
+        }
+    };
+
+    // Adds filter for readings before the until date. until string must be in URL Encoded RFC3339
+    // format.
+    if let Some(until) = &query.until{
+        println!("{}", until); 
+        if let Ok(date) = bson::DateTime::parse_rfc3339_str(until) {
+            filter_options.insert("reading_at", doc!("$lt": date));
+        } else {
+            return HttpResponse::BadRequest().body("from date is invalid");
+        }
+    };
+   
     let find_options_builder = mongodb::options::FindOptions::builder() 
         .limit(Some(PAGE_SIZE.try_into().unwrap()))
         .batch_size(Some(PAGE_SIZE.try_into().unwrap()));
