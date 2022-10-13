@@ -1,54 +1,12 @@
 use std::env;
 use serde::{Serialize, Deserialize};
-use serde_json::{Value, json};
+use serde_json::{Value};
 use dotenv::dotenv;
 use mongodb::{bson::{doc, serde_helpers::bson_datetime_as_rfc3339_string}, options::ClientOptions, Client};
 use futures::stream::StreamExt;
 use actix_web::{get, post, web, App, HttpResponse, HttpServer};
-use chrono;
 
-const QUERY_LIMIT : i32 = 50;
-
-#[tokio::main]
-async fn main() -> std::io::Result<()> {
-    dotenv().ok();
-
-    let mut connection_string: Option<String> = None;
-
-    for (key, value) in env::vars() {
-        if key == "CONNECTION_STRING" {
-            connection_string = Some(value);
-        }
-    }
-
-    let client : Option<Client>;
-
-    match connection_string {
-        None => { println!("No connection string"); client = None; },
-        Some(s) =>  { match connect_mongodb(s).await {
-            Err(_) => { println!("Couldn't complete database connection test."); client = None;},
-            Ok(c) => { client = Some(c); println!("Completed database connection test."); },
-        } }
-    }
-
-    match client {
-        None => { println!("No client."); Ok(()) },
-        Some (c) => { 
-            HttpServer::new(
-                move || {App::new()
-                    .app_data(web::Data::new(c.clone()))
-                    .service(get_status)
-                    .service(get_readings)
-                    .service(post_readings)
-                })
-                .bind(("127.0.0.1", 8080))?
-                .run()
-                .await
-        }
-    }
-}
-
-
+// const QUERY_LIMIT : i32 = 50;
 
 #[derive(Serialize, Deserialize, Clone)]
 struct DBReading{
@@ -83,10 +41,11 @@ struct Patient {
 }
 
 #[get("/status")]
-async fn get_status(client: web::Data<Client>) -> HttpResponse {
+async fn get_status(_client: web::Data<Client>) -> HttpResponse {
     HttpResponse::Ok().body("Hi")
 
 }
+
 #[derive(Serialize, Deserialize)]
 struct ReadingsQueryParam{
     patient: Option<String>,
@@ -139,7 +98,7 @@ async fn post_readings(client: web::Data<Client>, reading: web::Json<NewReading>
     let result = readings_collection.insert_one(new_reading, None).await;
 
     match result {
-        Ok(r) => HttpResponse::Ok().body("Hi"),
+        Ok(_) => HttpResponse::Ok().body("Hi"),
         Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
     }
 }
@@ -181,3 +140,35 @@ async fn connect_mongodb(connection_string: String) -> mongodb::error::Result<Cl
 
     Ok(client)
 }
+
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+    dotenv().ok();
+
+    let client = match env::var("CONNECTION_STRING") {
+        Err(_) => { println!("No connection string"); None },
+        Ok(s) =>  { match connect_mongodb(s).await {
+                Err(_) => { println!("Couldn't complete database connection test."); None},
+                Ok(c) => { println!("Completed database connection test."); Some(c) },
+            } 
+        }
+    };
+
+    match client {
+        None => { println!("No client."); Ok(()) },
+        Some (c) => { 
+            HttpServer::new(
+                move || {App::new()
+                    .app_data(web::Data::new(c.clone()))
+                    .service(get_status)
+                    .service(get_readings)
+                    .service(post_readings)
+                })
+                .bind(("127.0.0.1", 8080))?
+                .run()
+                .await
+        }
+    }
+}
+
+
