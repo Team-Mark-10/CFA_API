@@ -6,8 +6,10 @@ use mongodb::{bson::{doc, serde_helpers::bson_datetime_as_rfc3339_string}, optio
 use futures::stream::StreamExt;
 use actix_web::{get, post, web, App, HttpResponse, HttpServer};
 
-const PAGE_SIZE : usize = 1;
+// The amount of readings returned per page. 
+const PAGE_SIZE : usize = 50;
 
+// A reading from the database.
 #[derive(Serialize, Deserialize, Clone)]
 struct DBReading{
     reading_at: bson::DateTime, 
@@ -16,7 +18,7 @@ struct DBReading{
     patient: Patient,
 }
 
-
+// A format to serialize the incoming JSON payload from the POST request 
 #[derive(Serialize, Deserialize, Clone)]
 struct NewReading{
     #[serde(with = "bson_datetime_as_rfc3339_string")]
@@ -25,14 +27,17 @@ struct NewReading{
     patient: Patient,
 }
 
-
+// Represents a reading of data from a continuous capture from the HoloLens.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct ContinuousData {
     service_id: String,
     alias: Option<String>,
     value: f32,
+    confidence: f32,
 }
 
+// Represents the patient data attached to each reading. Supports arbitrary patient data under the data
+// key.
 #[derive(Serialize, Deserialize, Clone)]
 struct Patient {
     bluetooth_id : String,
@@ -40,31 +45,42 @@ struct Patient {
     data: Option<Value>,
 }
 
+// An endpoint to see if the API is active.
 #[get("/status")]
 async fn get_status(_client: web::Data<Client>) -> HttpResponse {
     HttpResponse::Ok().body("Hi")
-
 }
 
+// The optional parameters to the GET /readings request.
 #[derive(Serialize, Deserialize)]
 struct ReadingsQueryParam{
+    // If key exists, API will only return readings from this bluetooth id.
     patient: Option<String>,
+
+    // Specifies a earliest datetime (RFC3339) for the reading data
     from: Option<String>,
+
+    // Specifies a latest datetime (RFC3339) for the reading data
     until: Option<String>,
+
+    // Specifies which page number to return. Readings are returned in blocks of PAGE_SIZE. 
     page: Option<u64>,
 }
 
+// The format of the JSON respone to the GET /readings request.
 #[derive(Serialize, Deserialize)]
 struct GetReadingsResponse {
     readings: Vec<DBReading>,
 }
 
+// An API endpoint that returns the readings in the database. Can have query paramters:
+// patient (bluetooth_id), from, until, page.
 #[get("/readings")]
 async fn get_readings(client: web::Data<Client>, query: web::Query<ReadingsQueryParam>) -> HttpResponse {
     let readings_collection =  client.database("cfa-hud").collection("readings");
     
     let mut filter_options = bson::Document::new();
-
+    // If patient bluetooth_id specific, adds a filter to the query for only that bluetooth_id.
     if let Some(bid) = &query.patient {
         filter_options.insert("patient.bluetooth_id",  bid);
     };
@@ -73,6 +89,8 @@ async fn get_readings(client: web::Data<Client>, query: web::Query<ReadingsQuery
         .limit(Some(PAGE_SIZE.try_into().unwrap()))
         .batch_size(Some(PAGE_SIZE.try_into().unwrap()));
 
+    // If page numbers, specified returns readings page * PAGE_SIZE to page + 1 * PAGE_SIZE, if
+    // they exist.
     let find_options = match &query.page {
        Some(page) =>  find_options_builder.skip(page * PAGE_SIZE as u64).build(),
        None => find_options_builder.build(),
@@ -84,6 +102,7 @@ async fn get_readings(client: web::Data<Client>, query: web::Query<ReadingsQuery
         Ok(mut c) => {
             let mut readings = Vec::<DBReading>::new();
 
+            // Iterate through the readings and append them to the results if it exists.
             while let Some(result) = c.next().await {
                     match result {
                         Ok(doc) => readings.push(doc),
@@ -91,12 +110,15 @@ async fn get_readings(client: web::Data<Client>, query: web::Query<ReadingsQuery
                     }
             }
 
+            // Returns a 200 OK response with the readings
             HttpResponse::Ok().json(web::Json( GetReadingsResponse {readings: readings}) )
         },
         Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
     }
 }
 
+// An API endpoint to add readings to the database. Readings have to be in a specific format given
+// by the NewReading struct.
 #[post("/readings")]
 async fn post_readings(client: web::Data<Client>, reading: web::Json<NewReading>) -> HttpResponse {
     let readings_collection =  client.database("cfa-hud").collection::<DBReading>("readings");
@@ -109,11 +131,12 @@ async fn post_readings(client: web::Data<Client>, reading: web::Json<NewReading>
     let result = readings_collection.insert_one(new_reading, None).await;
 
     match result {
-        Ok(_) => HttpResponse::Ok().body("Hi"),
+        Ok(_) => HttpResponse::Ok().body("200 OK"),
         Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
     }
 }
 
+// Appends the created_at time to the NewReading
 fn convert_to_db_reading(reading: web::Json<NewReading>) -> DBReading {
     let cloned = reading.clone();
 
@@ -125,6 +148,7 @@ fn convert_to_db_reading(reading: web::Json<NewReading>) -> DBReading {
     }
 }
 
+// Connects to the MongoDB database and returns a client handle if successful.
 async fn connect_mongodb(connection_string: String) -> mongodb::error::Result<Client> {
     let mut client_options = ClientOptions::parse(connection_string).await?;
 
@@ -138,17 +162,6 @@ async fn connect_mongodb(connection_string: String) -> mongodb::error::Result<Cl
         .await?;
 
     println!("Connected successfully.");
-
-    for db_name in client.list_database_names(None, None).await? {
-        println!("{}", db_name);
-    }
-
-    let db = client.database("cfa-hud");
-
-    for collection_name in db.list_collection_names(None).await? {
-        println!("{}", collection_name)
-    }
-
     Ok(client)
 }
 
@@ -156,6 +169,7 @@ async fn connect_mongodb(connection_string: String) -> mongodb::error::Result<Cl
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
 
+    // Loads the connection string from the environment variables.
     let client = match env::var("CONNECTION_STRING") {
         Err(_) => { println!("No connection string"); None },
         Ok(s) =>  { match connect_mongodb(s).await {
@@ -165,6 +179,7 @@ async fn main() -> std::io::Result<()> {
         }
     };
 
+    // Starts the webserver if the app successfully connected to the DB.
     match client {
         None => { println!("No client."); Ok(()) },
         Some (c) => { 
@@ -181,5 +196,3 @@ async fn main() -> std::io::Result<()> {
         }
     }
 }
-
-
