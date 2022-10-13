@@ -6,7 +6,7 @@ use mongodb::{bson::{doc, serde_helpers::bson_datetime_as_rfc3339_string}, optio
 use futures::stream::StreamExt;
 use actix_web::{get, post, web, App, HttpResponse, HttpServer};
 
-// const QUERY_LIMIT : i32 = 50;
+const PAGE_SIZE : usize = 1;
 
 #[derive(Serialize, Deserialize, Clone)]
 struct DBReading{
@@ -51,6 +51,7 @@ struct ReadingsQueryParam{
     patient: Option<String>,
     from: Option<String>,
     until: Option<String>,
+    page: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -66,13 +67,23 @@ async fn get_readings(client: web::Data<Client>, query: web::Query<ReadingsQuery
 
     if let Some(bid) = &query.patient {
         filter_options.insert("patient.bluetooth_id",  bid);
-    }
+    };
+    
+    let find_options_builder = mongodb::options::FindOptions::builder() 
+        .limit(Some(PAGE_SIZE.try_into().unwrap()))
+        .batch_size(Some(PAGE_SIZE.try_into().unwrap()));
 
-    let cursor = readings_collection.find(filter_options, None).await;
+    let find_options = match &query.page {
+       Some(page) =>  find_options_builder.skip(page * PAGE_SIZE as u64).build(),
+       None => find_options_builder.build(),
+    };
+
+    let cursor = readings_collection.find(filter_options, find_options).await;
 
     match cursor {
         Ok(mut c) => {
             let mut readings = Vec::<DBReading>::new();
+
             while let Some(result) = c.next().await {
                     match result {
                         Ok(doc) => readings.push(doc),
