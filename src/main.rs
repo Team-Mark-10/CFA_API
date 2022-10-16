@@ -13,6 +13,7 @@ use std::env;
 // The amount of readings returned per page.
 const PAGE_SIZE: usize = 50;
 
+
 // A reading from the database.
 #[derive(Serialize, Deserialize, Clone)]
 struct DBReading {
@@ -146,20 +147,22 @@ async fn get_readings(
     }
 }
 
+#[derive(Serialize, Deserialize)]
+struct PostReadingsPayload {
+    readings: Vec<NewReading>,
+}
+
 // An API endpoint to add readings to the database. Readings have to be in a specific format given
 // by the NewReading struct.
 #[post("/readings")]
-async fn post_readings(client: web::Data<Client>, reading: web::Json<NewReading>) -> HttpResponse {
+async fn post_readings(client: web::Data<Client>, payload: web::Json<PostReadingsPayload>) -> HttpResponse {
     let readings_collection = client
         .database("cfa-hud")
         .collection::<DBReading>("readings");
 
-    println!("{}", reading.reading_at);
+    let new_readings = payload.readings.iter().map(|x| convert_to_db_reading(x)).collect::<Vec<_>>();
 
-    let new_reading = convert_to_db_reading(reading);
-
-    println!("{} {}", new_reading.reading_at, new_reading.created_at);
-    let result = readings_collection.insert_one(new_reading, None).await;
+    let result = readings_collection.insert_many(new_readings, None).await;
 
     match result {
         Ok(_) => HttpResponse::Ok().body("200 OK"),
@@ -168,7 +171,7 @@ async fn post_readings(client: web::Data<Client>, reading: web::Json<NewReading>
 }
 
 // Appends the created_at time to the NewReading
-fn convert_to_db_reading(reading: web::Json<NewReading>) -> DBReading {
+fn convert_to_db_reading(reading: &NewReading) -> DBReading {
     let cloned = reading.clone();
 
     DBReading {
@@ -200,6 +203,8 @@ async fn connect_mongodb(connection_string: String) -> mongodb::error::Result<Cl
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
 
+    env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
+
     // Loads the connection string from the environment variables.
     let client = match env::var("CONNECTION_STRING") {
         Err(_) => {
@@ -227,6 +232,7 @@ async fn main() -> std::io::Result<()> {
         Some(c) => {
             HttpServer::new(move || {
                 App::new()
+                    .wrap(actix_web::middleware::Logger::default())
                     .app_data(web::Data::new(c.clone()))
                     .service(get_status)
                     .service(get_readings)
