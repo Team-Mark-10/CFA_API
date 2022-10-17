@@ -17,7 +17,7 @@ use mongodb::{
     options::ClientOptions,
     Client,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, ser::SerializeStruct};
 use serde_json::Value;
 use std::{
     env,
@@ -111,7 +111,7 @@ async fn get_readings(
         if let Ok(date) = bson::DateTime::parse_rfc3339_str(from) {
             filter_options.insert("reading_at", doc!("$gte": date));
         } else {
-            return HttpResponse::BadRequest().body("from date is invalid");
+            return APIError::BadFormat(String::from("from"), String::from("not in rfc3339 format")).error_response();
         }
     };
 
@@ -121,7 +121,7 @@ async fn get_readings(
         if let Ok(date) = bson::DateTime::parse_rfc3339_str(until) {
             filter_options.insert("reading_at", doc!("$lt": date));
         } else {
-            return HttpResponse::BadRequest().body("from date is invalid");
+            return APIError::BadFormat(String::from("until"), String::from("not in rfc3339 format")).error_response();
         }
     };
 
@@ -153,7 +153,7 @@ async fn get_readings(
             // Returns a 200 OK response with the readings
             HttpResponse::Ok().json(web::Json(GetReadingsResponse { readings: readings }))
         }
-        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
+        Err(e) => APIError::DBError(e.to_string()).error_response(),
     }
 }
 
@@ -183,7 +183,7 @@ async fn post_readings(
 
     match result {
         Ok(_) => HttpResponse::Ok().body("200 OK"),
-        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
+        Err(e) => APIError::DBError(e.to_string()).error_response(),
     }
 }
 
@@ -235,7 +235,7 @@ async fn validator(
             match authorised {
                 true => Ok(req),
                 false => Err((
-                    actix_web::error::ErrorUnauthorized(AuthError::CredentialsInvalid),
+                    APIError::CredentialsInvalid.into(),
                     req,
                 )),
             }
@@ -245,18 +245,49 @@ async fn validator(
 }
 
 #[derive(Debug, Display)]
-enum AuthError {
-    #[display(fmt = "CredentialsInvalid")]
+enum APIError {
     CredentialsInvalid,
+    DBError(String),
+
+    #[display(fmt = "BadFormat")]
+    BadFormat(String, String)
 }
 
-impl ResponseError for AuthError {
+impl std::error::Error for APIError {}
+
+impl ResponseError for APIError {
     fn error_response(&self) -> HttpResponse {
         match self {
-            AuthError::CredentialsInvalid => {
-                HttpResponse::Unauthorized().json("{\"error\": \"Invalid Credentials\"}")
-            }
+            APIError::CredentialsInvalid => HttpResponse::Unauthorized().json(self),
+            APIError::DBError(_) => HttpResponse::InternalServerError().json(self),
+            APIError::BadFormat(_, _) => HttpResponse::BadRequest().json(self)
         }
+    }
+}
+
+impl Serialize for APIError {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer {
+        let mut s = serializer.serialize_struct("AuthError", 2)?;
+
+        let value = match self {
+            APIError::CredentialsInvalid => "Invalid Credentials",
+            APIError::DBError(_) => "Database Error",
+            APIError::BadFormat(_, _) => "Bad Format"
+        };
+
+        s.serialize_field("error", &value)?;
+
+        if let APIError::DBError(details) = self {
+            let _ = &s.serialize_field("details", details);
+        }
+
+        if let APIError::BadFormat(field, details) = self {
+            let _ = &s.serialize_field("details", &format!("{} {}", field, details));
+        }
+
+        s.end()
     }
 }
 
@@ -319,6 +350,7 @@ async fn main() -> std::io::Result<()> {
                 App::new()
                     .wrap(HttpAuthentication::basic(current_auth_closure.clone()))
                     .app_data(web::Data::new(c.clone()))
+                    .app_data(web::JsonConfig::default().error_handler(|error, _req|  { APIError::BadFormat(String::from(""), error.to_string()).into() }))
                     .service(get_status)
                     .service(get_readings)
                     .service(post_readings)
