@@ -1,4 +1,12 @@
-use actix_web::{get, post, web, App, HttpResponse, HttpServer};
+use std::{future::{ready, Ready}, env, rc::Rc, sync::Arc, ops::Deref};
+use futures_util::future::LocalBoxFuture;
+use actix_web::{
+    ResponseError, get, post, web, App, HttpResponse, HttpServer,  Error, middleware::Condition,
+    dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform}
+};
+use derive_more::{Display};
+use actix_web_httpauth::{extractors::{AuthenticationError, basic::{self,BasicAuth, Config}}, middleware::HttpAuthentication};
+use actix_http::header::{self, HeaderMap, HeaderValue};
 use dotenv::dotenv;
 use futures::stream::StreamExt;
 use mongodb::{
@@ -6,9 +14,9 @@ use mongodb::{
     options::ClientOptions,
     Client,
 };
+use log::{debug, warn, info};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::env;
 
 // The amount of readings returned per page.
 const PAGE_SIZE: usize = 50;
@@ -185,7 +193,7 @@ fn convert_to_db_reading(reading: &NewReading) -> DBReading {
 // Connects to the MongoDB database and returns a client handle if successful.
 async fn connect_mongodb(connection_string: String) -> mongodb::error::Result<Client> {
     let mut client_options = ClientOptions::parse(connection_string).await?;
-
+ 
     client_options.app_name = Some("CFA HUD".to_string());
 
     let client = Client::with_options(client_options)?;
@@ -199,11 +207,77 @@ async fn connect_mongodb(connection_string: String) -> mongodb::error::Result<Cl
     Ok(client)
 }
 
+async fn validator(
+    req: ServiceRequest,
+    credentials: BasicAuth,
+    username: Option<String>,
+    password: Option<String>,
+) -> Result<ServiceRequest, (actix_web::Error, ServiceRequest)> {
+    match username.is_some() && password.is_some() {
+        true => {
+           let authorised = match username.unwrap() == credentials.user_id() {
+                true => {
+                    match credentials.password() {
+                        Some(pwd) => pwd == password.unwrap(),
+                        None => false,
+                    }
+                }
+                false => false
+           };
+
+           match authorised {
+                true => Ok(req),
+                false => Err((actix_web::error::ErrorUnauthorized(AuthError::CredentialsInvalid), req)),
+           }
+        },
+        false => Ok(req),
+    }
+}
+
+#[derive(Debug, Display)]
+enum AuthError {
+    #[display(fmt = "CredentialsInvalid")]
+    CredentialsInvalid,
+}
+
+impl ResponseError for AuthError {
+    fn error_response(&self) -> HttpResponse {
+        match self {
+            AuthError::CredentialsInvalid => HttpResponse::Unauthorized().json("{\"error\": \"Invalid Credentials\"}"),
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
 
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
+
+    let username = match env::var("USERAME") {
+        Err(_) => {
+            None
+        }
+        Ok(username) => {
+            info!("Username logged");
+            Some(username)
+        }
+    };
+    let password = match env::var("PASSWORD") {
+        Err(_) => {
+            None
+        }
+        Ok(pwd) => {
+            info!("Password logged.");
+            Some(pwd)
+        }
+    };
+
+    if username.is_none() || password.is_none() {
+        warn!("Username or password missing in environment. Starting unauthenticated API");
+    } else {
+        info!("Username and password logged. Starting authenticated API");
+    }
 
     // Loads the connection string from the environment variables.
     let client = match env::var("CONNECTION_STRING") {
@@ -222,7 +296,7 @@ async fn main() -> std::io::Result<()> {
             }
         },
     };
-
+    
     // Starts the webserver if the app successfully connected to the DB.
     match client {
         None => {
@@ -230,14 +304,35 @@ async fn main() -> std::io::Result<()> {
             Ok(())
         }
         Some(c) => {
-            HttpServer::new(move || {
-                App::new()
-                    .wrap(actix_web::middleware::Logger::default())
-                    .app_data(web::Data::new(c.clone()))
-                    .service(get_status)
-                    .service(get_readings)
-                    .service(post_readings)
-            })
+           HttpServer::new(move || {
+            let username = match env::var("USERAME") {
+                Err(_) => {
+                    None
+                }
+                Ok(username) => {
+                    Some(username)
+                }
+           };
+           let password = match env::var("PASSWORD") {
+                Err(_) => {
+                    None
+                }
+                Ok(pwd) => {
+                    Some(pwd)
+                }
+           };
+
+            
+             let closure = move |req: ServiceRequest, credentials: BasicAuth| { validator(req, credentials, username.clone(), password.clone() ) };
+
+             App::new()
+                .wrap(HttpAuthentication::basic(closure))
+                .app_data(web::Data::new(c.clone()))
+                .service(get_status)
+                .service(get_readings)
+                .service(post_readings)
+
+           })
             .bind(("0.0.0.0", 8080))?
             .run()
             .await
