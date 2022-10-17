@@ -266,14 +266,14 @@ async fn main() -> std::io::Result<()> {
 
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
 
-    let username = match env::var("USERAME") {
+    let username = match env::var("API_USERNAME") {
         Err(_) => None,
         Ok(username) => {
             info!("Username logged");
             Some(username)
         }
     };
-    let password = match env::var("PASSWORD") {
+    let password = match env::var("API_PASSWORD") {
         Err(_) => None,
         Ok(pwd) => {
             info!("Password logged.");
