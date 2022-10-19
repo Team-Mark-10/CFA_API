@@ -1,3 +1,5 @@
+use md5::{Digest};
+use hex_literal::hex;
 use std::{future::{ready, Ready}, env, rc::Rc, sync::Arc, ops::Deref};
 use futures_util::future::LocalBoxFuture;
 use actix_web::{
@@ -218,7 +220,14 @@ async fn validator(
            let authorised = match username.unwrap() == credentials.user_id() {
                 true => {
                     match credentials.password() {
-                        Some(pwd) => pwd == password.unwrap(),
+                        Some(pwd) => 
+                        {
+                            let digest1 = md5::compute(pwd);
+                            let digest2 = md5::compute(password.unwrap());
+
+                            digest1 == digest2
+
+                        },
                         None => false,
                     }
                 }
